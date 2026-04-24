@@ -1,0 +1,60 @@
+# Mahjong set stock monitor configuration.
+#
+# Each site is polled independently on its own randomized schedule so request
+# patterns don't line up. Keep min_interval_minutes generous (>= 5) for any one
+# site - frequent polling is the fastest way to get fingerprinted.
+
+global:
+  # Where to persist last-seen state between runs.
+  state_file: .state.json
+  # Timeout for any single HTTP request, seconds.
+  request_timeout: 25
+  # If a site returns 429/503, wait this long (plus jitter) before retrying.
+  backoff_minutes: 60
+  # Optional outbound HTTP/HTTPS proxy (e.g. residential). Leave null to skip.
+  proxy: null
+
+notifications:
+  # Desktop notification via `notify-send` (Linux) / `osascript` (macOS).
+  # Falls back to stdout if neither is available.
+  desktop: true
+  # Optional generic webhook (Slack/Discord/ntfy/etc.). Leave null to skip.
+  # For Slack/Discord incoming webhooks, the body {"text": "..."} works.
+  webhook_url: null
+  # Optional ntfy.sh topic (simple push to phone).
+  ntfy_topic: null
+
+sites:
+  - name: "Yellow Mountain Imports - American Mahjong"
+    url: "https://www.example-mahjong-shop.com/products/american-set"
+    # Randomized poll interval: picks a value uniformly in this range each cycle.
+    min_interval_minutes: 12
+    max_interval_minutes: 28
+    # Hit the site's homepage first so the product request looks like a
+    # real navigation (sets cookies, warms the session).
+    warmup_url: "https://www.example-mahjong-shop.com/"
+    # How to decide "in stock". The checks run in order; the first that
+    # matches wins. Supported types:
+    #   text_absent   - in stock if `value` is NOT found in page text
+    #   text_present  - in stock if `value` IS found in page text
+    #   css_absent    - in stock if CSS selector finds nothing
+    #   css_present   - in stock if CSS selector finds something
+    #   json_ld       - parse <script type="application/ld+json"> and read
+    #                   offers.availability (Schema.org)
+    stock_checks:
+      - type: json_ld
+      - type: text_absent
+        value: "Out of stock"
+      - type: css_absent
+        value: "button.sold-out, .product-form__sold-out"
+
+  - name: "Where I Play - Riichi Set"
+    url: "https://example-riichi-store.jp/product/pro-set"
+    min_interval_minutes: 20
+    max_interval_minutes: 45
+    warmup_url: "https://example-riichi-store.jp/"
+    stock_checks:
+      - type: text_absent
+        value: "売り切れ"
+      - type: text_absent
+        value: "在庫切れ"
