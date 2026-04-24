@@ -1,0 +1,54 @@
+# Crisloid mahjong set stock monitor.
+#
+# Crisloid runs on WooCommerce. We detect stock via:
+#   - json_ld    - WooCommerce emits Schema.org Product offers.availability
+#   - text_absent "Out of stock" - the standard WC stock label
+#   - css_absent .out-of-stock    - the standard WC CSS hook
+# For the variable "Florence" product the URL query string is client-side
+# only (the server renders the same HTML for every color), so we use the
+# wc_variation check which parses form.variations_form[data-product_variations]
+# and looks up the specific color.
+
+global:
+  state_file: .state.json
+  request_timeout: 25
+  backoff_minutes: 60
+  proxy: null
+
+notifications:
+  desktop: true
+  webhook_url: null
+  ntfy_topic: null
+
+sites:
+  - name: "Crisloid - Mother Nature Mahjong Set"
+    url: "https://www.crisloid.com/product/mother-nature-mahjong-set/"
+    min_interval_minutes: 25
+    max_interval_minutes: 55
+    warmup_url: "https://www.crisloid.com/"
+    stock_checks:
+      - type: json_ld
+      - type: css_absent
+        value: "p.stock.out-of-stock, .out-of-stock"
+      - type: text_absent
+        value: "Out of stock"
+
+  - name: "Crisloid - 9 Florence Mahjong (Creamy White)"
+    url: "https://www.crisloid.com/product/9-florence-mahjong/?attribute_tile-color=Creamy%20White"
+    min_interval_minutes: 25
+    max_interval_minutes: 55
+    warmup_url: "https://www.crisloid.com/"
+    stock_checks:
+      - type: wc_variation
+        attribute: "tile-color"
+        value: "Creamy White"
+
+  - name: "Crisloid - 9 Florence Mahjong (Light Green)"
+    url: "https://www.crisloid.com/product/9-florence-mahjong/?attribute_tile-color=Light%20Green"
+    min_interval_minutes: 25
+    max_interval_minutes: 55
+    warmup_url: "https://www.crisloid.com/"
+    stock_checks:
+      - type: wc_variation
+        attribute: "tile-color"
+        value: "Light Green"

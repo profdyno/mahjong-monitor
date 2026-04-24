@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html as htmllib
 import json
 import re
 
@@ -54,6 +55,37 @@ def _extract_availability(offers) -> str | None:
     return None
 
 
+def _wc_variation_in_stock(soup: BeautifulSoup, attribute: str, value: str) -> bool | None:
+    """Look up stock for a specific WooCommerce product variation.
+
+    WooCommerce renders variable products with
+        <form class="variations_form" data-product_variations="[...JSON...]">
+    where each entry has {attributes: {"attribute_<name>": "<value>"},
+    is_in_stock: bool, ...}. We match case-insensitively on both attribute
+    key (with or without the "attribute_" prefix) and value.
+    """
+    form = soup.select_one("form.variations_form[data-product_variations]")
+    if form is None:
+        return None
+    raw = form.get("data-product_variations") or ""
+    # The attribute is HTML-encoded (e.g. &quot;) when emitted.
+    raw = htmllib.unescape(raw)
+    try:
+        variations = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    want_keys = {attribute.lower(), f"attribute_{attribute}".lower()}
+    want_value = value.strip().lower()
+
+    for v in variations:
+        attrs = v.get("attributes") or {}
+        for k, val in attrs.items():
+            if k.lower() in want_keys and str(val).strip().lower() == want_value:
+                return bool(v.get("is_in_stock"))
+    return None
+
+
 def is_in_stock(html: str, checks: list[dict]) -> tuple[bool, str]:
     """Run the configured checks in order and return (in_stock, reason)."""
     soup = BeautifulSoup(html, "lxml")
@@ -87,6 +119,22 @@ def is_in_stock(html: str, checks: list[dict]) -> tuple[bool, str]:
             if soup.select(value):
                 return True, f"selector '{value}' matched"
             return False, f"selector '{value}' matched nothing"
+
+        elif kind == "regex_absent":
+            if not re.search(value, html, re.IGNORECASE | re.DOTALL):
+                return True, f"regex /{value}/ did not match"
+            return False, f"regex /{value}/ matched"
+
+        elif kind == "regex_present":
+            if re.search(value, html, re.IGNORECASE | re.DOTALL):
+                return True, f"regex /{value}/ matched"
+            return False, f"regex /{value}/ did not match"
+
+        elif kind == "wc_variation":
+            attr = check.get("attribute", "")
+            result = _wc_variation_in_stock(soup, attr, value)
+            if result is not None:
+                return result, f"wc variation {attr}={value} -> {result}"
 
     # No check produced a verdict - be conservative, treat as out of stock.
     return False, "no check produced a verdict"
