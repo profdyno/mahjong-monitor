@@ -13,6 +13,12 @@ global:
   backoff_minutes: 60
   # Optional outbound HTTP/HTTPS proxy (e.g. residential). Leave null to skip.
   proxy: null
+  # Optional daily poll window. If set, all sites only poll inside
+  # [start, end) in the given IANA timezone. DST is handled.
+  poll_window:
+    timezone: "America/New_York"
+    start: "10:00"
+    end: "13:00"
 
 notifications:
   # Desktop notification via `notify-send` (Linux) / `osascript` (macOS).

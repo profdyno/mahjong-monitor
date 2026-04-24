@@ -11,12 +11,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import logging
 import random
 import sys
 import threading
 import time
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 import requests
 import yaml
@@ -42,6 +44,45 @@ class Site:
 def load_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
+
+
+def seconds_until_window(now: dt.datetime, start: dt.time, end: dt.time,
+                         tz: ZoneInfo) -> float:
+    """Seconds from `now` until the next [start, end) window opens in `tz`.
+    Returns 0 if we're already inside the window."""
+    local = now.astimezone(tz)
+    today_open = local.replace(hour=start.hour, minute=start.minute,
+                               second=0, microsecond=0)
+    today_close = local.replace(hour=end.hour, minute=end.minute,
+                                second=0, microsecond=0)
+    if today_open <= local < today_close:
+        return 0.0
+    next_open = today_open if local < today_open else today_open + dt.timedelta(days=1)
+    return (next_open - local).total_seconds()
+
+
+def clip_to_window(sleep_seconds: float, config: dict) -> float:
+    """If a poll window is configured and we're currently inside it, make sure
+    we don't sleep past the close - reopen at the next window start instead."""
+    window = config["global"].get("poll_window")
+    if not window:
+        return sleep_seconds
+    tz = ZoneInfo(window.get("timezone", "America/New_York"))
+    start = dt.time.fromisoformat(window["start"])
+    end = dt.time.fromisoformat(window["end"])
+    now = dt.datetime.now(tz)
+    until_open = seconds_until_window(now, start, end, tz)
+    if until_open > 0:
+        # Add a small jitter so all threads don't wake at exactly the open.
+        return until_open + random.uniform(0, 120)
+    # Inside the window. Don't sleep past close - pick up at next open instead.
+    close_dt = now.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
+    seconds_left = (close_dt - now).total_seconds()
+    if sleep_seconds > seconds_left:
+        tomorrow_open = now.replace(hour=start.hour, minute=start.minute,
+                                    second=0, microsecond=0) + dt.timedelta(days=1)
+        return (tomorrow_open - now).total_seconds() + random.uniform(0, 120)
+    return sleep_seconds
 
 
 def build_sites(config: dict) -> list[Site]:
@@ -107,6 +148,14 @@ def run_site_loop(site: Site, config: dict, st: dict, st_lock: threading.Lock,
         return
 
     while not stop.is_set():
+        # If we're outside the configured poll window, sleep until it opens.
+        if not once:
+            wait = clip_to_window(0, config)
+            if wait > 0:
+                log.info("[%s] outside poll window, sleeping %.0fs", site.name, wait)
+                if stop.wait(wait):
+                    return
+
         in_stock, reason = check_site(site, config, session)
         log.info("[%s] in_stock=%s reason=%s", site.name, in_stock, reason)
 
@@ -139,6 +188,7 @@ def run_site_loop(site: Site, config: dict, st: dict, st_lock: threading.Lock,
             continue
 
         sleep_for = jittered_interval(site.min_interval_minutes, site.max_interval_minutes)
+        sleep_for = clip_to_window(sleep_for, config)
         log.debug("[%s] next poll in %.0fs", site.name, sleep_for)
         if stop.wait(sleep_for):
             return
